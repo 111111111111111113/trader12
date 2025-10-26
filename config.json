@@ -1,0 +1,13 @@
+{
+  "host": "localhost",          
+  "port": 25565,                 
+  "username": "Synfulalt", 
+  "version": "1.21.4",           
+  "whitelist": ["_SynFul"], 
+  "bounds": {
+    "corner1": null,             
+    "corner2": null             
+  },
+  "antiAFKWaitTime": 600000,    
+  "tradeItems": ["glass", "experience_bottle"] 
+}
