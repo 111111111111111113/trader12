@@ -1,9 +1,16 @@
 {
+  "name": "minecraft-trading-bot",
+  "version": "1.0.0",
+  "description": "Minecraft 1.21.4 Trading Bot",
+  "main": "bot.js",
   "dependencies": {
     "chalk": "^5.6.2",
     "minecraft-data": "^3.99.1",
     "mineflayer": "^4.33.0",
     "mineflayer-pathfinder": "^2.4.5",
     "vec3": "^0.1.10"
+  },
+  "engines": {
+    "node": ">=16.0.0"
   }
 }
