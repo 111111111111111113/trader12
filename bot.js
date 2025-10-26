@@ -126,17 +126,41 @@ bot.on('whisper', async (playerName, message) => {
 async function mainLoop() {
   while (running) {
     try {
+      // Check if bot is still connected
+      if (!bot.entity || !bot.entity.position) {
+        log('Bot not properly spawned, waiting...');
+        await bot.waitForTicks(100);
+        continue;
+      }
+
       const villagers = getNearbyVillagers();
-      if (villagers.length === 0) log('No villagers in render distance.');
+      if (villagers.length === 0) {
+        log('No villagers in render distance.');
+        await bot.waitForTicks(6000); // Wait 5 minutes before checking again
+        continue;
+      }
+
+      log(`Found ${villagers.length} villagers nearby`);
 
       for (const villager of villagers) {
-        if (!withinBounds(villager.position)) continue;
+        if (!running) break; // Check if bot should stop
+        
+        if (!withinBounds(villager.position)) {
+          log(`Villager at ${villager.position} is outside bounds, skipping`);
+          continue;
+        }
 
         // Path to villager safely
         await goToEntity(villager);
+        
+        // Small delay before trading
+        await bot.waitForTicks(20);
 
         // Trade
         await tradeWithVillager(villager);
+        
+        // Wait between villager interactions
+        await bot.waitForTicks(100);
       }
 
       log('Finished checking all villagers. Waiting 10 minutes for anti-AFK.');
@@ -144,6 +168,8 @@ async function mainLoop() {
 
     } catch (err) {
       log(`Error in main loop: ${err.message}`);
+      // Wait before retrying to avoid rapid error loops
+      await bot.waitForTicks(1000);
     }
   }
 }
@@ -152,10 +178,12 @@ async function mainLoop() {
 function getNearbyVillagers() {
   return Object.values(bot.entities).filter(e => {
     if (!e) return false;
-    if (e.type !== 'passive') return false;
+    // Check for villager entity type (updated for 1.21.4)
+    if (e.type !== 'passive' && e.type !== 'villager') return false;
     if (!e.displayName) return false;
     let name = typeof e.displayName === 'string' ? e.displayName : e.displayName.toString();
-    return name === 'Villager';
+    // Check for villager variants
+    return name === 'Villager' || name.includes('Villager') || e.name === 'villager';
   });
 }
 
@@ -174,11 +202,21 @@ function withinBounds(pos) {
 
 // -------------------- Pathfinding --------------------
 async function goToEntity(entity) {
-  if (!entity || !entity.position) return;
+  if (!entity || !entity.position) {
+    log('Invalid entity or position for pathfinding');
+    return;
+  }
 
-  const goal = new GoalNear(entity.position.x, entity.position.y, entity.position.z, 1);
+  const goal = new GoalNear(entity.position.x, entity.position.y, entity.position.z, 2);
   try {
-    await bot.pathfinder.goto(goal);
+    // Add timeout for pathfinding
+    const pathPromise = bot.pathfinder.goto(goal);
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Pathfinding timeout')), 10000)
+    );
+    
+    await Promise.race([pathPromise, timeoutPromise]);
+    log(`Successfully reached villager at ${entity.position}`);
   } catch (err) {
     log(`Pathing error: ${err.message} - villager might be unreachable.`);
   }
@@ -187,18 +225,44 @@ async function goToEntity(entity) {
 // -------------------- Trading --------------------
 async function tradeWithVillager(villager) {
   try {
-    await bot.openVillager(villager);
-    const window = bot.currentWindow;
-    if (!window) return;
+    // Use the correct method for opening villager trading interface
+    const window = await bot.openVillager(villager);
+    if (!window) {
+      log('Failed to open villager trading interface');
+      return;
+    }
 
-    const trades = window.villager.trades;
+    // Wait a bit for the window to fully load
+    await bot.waitForTicks(10);
+
+    const trades = window.villager?.trades || [];
+    if (trades.length === 0) {
+      log('No trades available with this villager');
+      await window.close();
+      return;
+    }
+
     for (let i = 0; i < trades.length; i++) {
       const trade = trades[i];
       if (trade.disabled) continue;
-      const sell = trade.outputItem.name;
+      
+      // Check if we have enough emeralds for this trade
+      const emeraldCount = bot.inventory.count(mcData.itemsByName.emerald.id);
+      if (emeraldCount < (trade.inputItem1?.count || 0)) {
+        log('Not enough emeralds for trading');
+        break;
+      }
+
+      const sell = trade.outputItem?.name || '';
       if (sell.includes('glass') || sell.includes('experience_bottle')) {
-        await bot.trade(villager, i);
-        log(`Traded emeralds for ${sell}`);
+        try {
+          await bot.trade(villager, i);
+          log(`Traded emeralds for ${sell}`);
+          // Wait between trades
+          await bot.waitForTicks(5);
+        } catch (tradeErr) {
+          log(`Failed to execute trade ${i}: ${tradeErr.message}`);
+        }
       }
     }
 
@@ -214,15 +278,34 @@ async function tradeWithVillager(villager) {
 async function depositItems() {
   try {
     const block = bot.blockAt(depositChest);
-    if (!block) return;
+    if (!block) {
+      log('Deposit chest block not found');
+      return;
+    }
+    
     const chest = await bot.openChest(block);
+    if (!chest) {
+      log('Failed to open deposit chest');
+      return;
+    }
 
+    let deposited = false;
     for (const item of bot.inventory.items()) {
       if (item.name.includes('glass') || item.name.includes('experience_bottle')) {
-        await chest.deposit(item.type, null, item.count);
-        log(`Deposited ${item.count}x ${item.name}`);
+        try {
+          await chest.deposit(item.type, null, item.count);
+          log(`Deposited ${item.count}x ${item.name}`);
+          deposited = true;
+        } catch (depositErr) {
+          log(`Failed to deposit ${item.name}: ${depositErr.message}`);
+        }
       }
     }
+    
+    if (!deposited) {
+      log('No items to deposit');
+    }
+    
     await chest.close();
   } catch (err) {
     log(`Deposit failed: ${err.message}`);
@@ -231,15 +314,35 @@ async function depositItems() {
 
 async function refillEmeralds() {
   try {
+    if (!refillChest) {
+      log('No refill chest set');
+      return;
+    }
+    
     const block = bot.blockAt(refillChest);
-    if (!block) return;
+    if (!block) {
+      log('Refill chest block not found');
+      return;
+    }
+    
     const chest = await bot.openChest(block);
+    if (!chest) {
+      log('Failed to open refill chest');
+      return;
+    }
 
     const emeraldCount = bot.inventory.count(mcData.itemsByName.emerald.id);
     if (emeraldCount < 16) {
       const emeralds = chest.containerItems().find(i => i.name === 'emerald');
-      if (emeralds) await chest.withdraw(emeralds.type, null, Math.min(emeralds.count, 64));
-      log('Refilled emeralds');
+      if (emeralds) {
+        const withdrawAmount = Math.min(emeralds.count, 64 - emeraldCount);
+        await chest.withdraw(emeralds.type, null, withdrawAmount);
+        log(`Refilled ${withdrawAmount} emeralds`);
+      } else {
+        log('No emeralds found in refill chest');
+      }
+    } else {
+      log('Already have enough emeralds');
     }
 
     await chest.close();
