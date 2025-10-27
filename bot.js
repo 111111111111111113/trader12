@@ -42,9 +42,16 @@ bot.once('spawn', () => {
       super(bot, mcData);
       this.allowDigging = false;
       this.allowPlace = false;
+      this.allow1by1towers = false;
+      this.allowFreeMotion = false;
+      this.allowParkour = false;
+      this.allowSprinting = false;
     }
     canDig() { return false; }
     canPlace() { return false; }
+    canBreak() { return false; }
+    canMine() { return false; }
+    canDestroy() { return false; }
   }
 
   const safeMove = new SafeMovements(bot, mcData);
@@ -150,8 +157,12 @@ async function mainLoop() {
           continue;
         }
 
-        // Path to villager safely
+        // Path to villager safely (stops 4 blocks away to avoid breaking blocks)
         await goToEntity(villager);
+        
+        // Check final distance and log it
+        const finalDistance = bot.entity.position.distanceTo(villager.position);
+        log(`Stopped at safe distance: ${finalDistance.toFixed(2)} blocks from villager`);
         
         // Small delay before trading
         await bot.waitForTicks(20);
@@ -207,7 +218,7 @@ async function goToEntity(entity) {
     return;
   }
 
-  const goal = new GoalNear(entity.position.x, entity.position.y, entity.position.z, 2);
+  const goal = new GoalNear(entity.position.x, entity.position.y, entity.position.z, 4);
   try {
     // Add timeout for pathfinding
     const pathPromise = bot.pathfinder.goto(goal);
@@ -225,6 +236,13 @@ async function goToEntity(entity) {
 // -------------------- Trading --------------------
 async function tradeWithVillager(villager) {
   try {
+    // Check if villager is still within interaction range (max 4 blocks)
+    const distance = bot.entity.position.distanceTo(villager.position);
+    if (distance > 4) {
+      log(`Villager too far away (${distance.toFixed(2)} blocks), skipping trade`);
+      return;
+    }
+
     // Use the correct method for opening villager trading interface
     const window = await bot.openVillager(villager);
     if (!window) {
@@ -357,6 +375,12 @@ setInterval(() => {
   bot.look(bot.entity.yaw + Math.random() * 0.3 - 0.15, 0);
   bot.chat('/ping');
 }, 4000);
+
+// -------------------- Safety Overrides --------------------
+// Override any potential block breaking methods to ensure they never execute
+bot.dig = () => { log('SAFETY: Block breaking attempt blocked!'); return Promise.resolve(); };
+bot.placeBlock = () => { log('SAFETY: Block placing attempt blocked!'); return Promise.resolve(); };
+bot.activateBlock = () => { log('SAFETY: Block activation attempt blocked!'); return Promise.resolve(); };
 
 // -------------------- Logging --------------------
 bot.on('spawn', () => log('Bot spawned successfully.'));
