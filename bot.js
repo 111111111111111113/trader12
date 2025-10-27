@@ -1,5 +1,6 @@
 // -------------------- Required Modules --------------------
 const fs = require('fs');
+const readline = require('readline');
 const mineflayer = require('mineflayer');
 const { pathfinder, Movements, goals: { GoalNear } } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
@@ -35,6 +36,8 @@ let whitelist = config.whitelist || [];
 let bound1 = null;
 let bound2 = null;
 let mcData;
+let autoeat = config.autoeat || true;
+let consoleInterface = null;
 
 // -------------------- Logging Helpers --------------------
 function log(msg) { console.log(`[BOT] ${msg}`); }
@@ -64,6 +67,9 @@ bot.once('spawn', () => {
   const safeMove = new SafeMovements(bot, mcData);
   bot.pathfinder.setMovements(safeMove);
   log('Safe pathfinding initialized: block breaking and placing disabled.');
+  
+  // Initialize console interface
+  setupConsoleInterface();
 });
 
 // -------------------- Commands --------------------
@@ -134,14 +140,216 @@ bot.on('whisper', async (playerName, message) => {
     case 'status':
       reply(playerName, running ? 'Bot is trading.' : 'Bot is idle.');
       break;
+    case 'autoeat':
+      if (args[0] === 'on' || args[0] === 'enable') {
+        autoeat = true;
+        reply(playerName, 'Autoeat enabled.');
+      } else if (args[0] === 'off' || args[0] === 'disable') {
+        autoeat = false;
+        reply(playerName, 'Autoeat disabled.');
+      } else {
+        reply(playerName, `Autoeat is currently ${autoeat ? 'enabled' : 'disabled'}. Use 'autoeat on/off' to toggle.`);
+      }
+      break;
+    case 'eat':
+      const ate = await eatFood();
+      reply(playerName, ate ? 'Ate food successfully.' : 'No food available or failed to eat.');
+      break;
+    case 'health':
+      reply(playerName, `Health: ${bot.health}/20, Food: ${bot.food}/20, Saturation: ${bot.foodSaturation}/20`);
+      break;
     case 'help':
-      reply(playerName, 'Commands: start, stop, setDeposit, setRefill, setBound1, setBound2, addWhitelist <name>, removeWhitelist <name>, whitelist, status');
+      reply(playerName, 'Commands: start, stop, setDeposit, setRefill, setBound1, setBound2, addWhitelist <name>, removeWhitelist <name>, whitelist, status, autoeat on/off, eat, health');
       reply(playerName, 'Discord webhooks: Configure webhook URL in config.json to receive notifications for trades, status, and errors');
       break;
     default:
       reply(playerName, 'Unknown command. Use /msg <botname> help');
   }
 });
+
+// -------------------- Console Interface --------------------
+function setupConsoleInterface() {
+  consoleInterface = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: 'Bot> '
+  });
+
+  consoleInterface.on('line', async (input) => {
+    const args = input.trim().split(/ +/);
+    const cmd = args.shift().toLowerCase();
+
+    switch (cmd) {
+      case 'start':
+        if (running) {
+          console.log('Bot is already running.');
+        } else {
+          running = true;
+          console.log('Trading bot started.');
+          if (config.discord?.notifyStatus) {
+            discord.sendStatusNotification('started', 'Started via console');
+          }
+          mainLoop();
+        }
+        break;
+      case 'stop':
+        if (!running) {
+          console.log('Bot is not running.');
+        } else {
+          running = false;
+          console.log('Trading bot stopped.');
+          if (config.discord?.notifyStatus) {
+            discord.sendStatusNotification('stopped', 'Stopped via console');
+          }
+        }
+        break;
+      case 'status':
+        console.log(`Bot status: ${running ? 'Running' : 'Stopped'}`);
+        console.log(`Autoeat: ${autoeat ? 'Enabled' : 'Disabled'}`);
+        console.log(`Deposit chest: ${depositChest ? depositChest : 'Not set'}`);
+        console.log(`Refill chest: ${refillChest ? refillChest : 'Not set'}`);
+        console.log(`Bounds: ${bound1 && bound2 ? `${bound1} to ${bound2}` : 'Not set'}`);
+        console.log(`Whitelist: ${whitelist.join(', ') || 'None'}`);
+        break;
+      case 'autoeat':
+        if (args[0] === 'on' || args[0] === 'enable') {
+          autoeat = true;
+          console.log('Autoeat enabled.');
+        } else if (args[0] === 'off' || args[0] === 'disable') {
+          autoeat = false;
+          console.log('Autoeat disabled.');
+        } else {
+          console.log(`Autoeat is currently ${autoeat ? 'enabled' : 'disabled'}. Use 'autoeat on/off' to toggle.`);
+        }
+        break;
+      case 'whitelist':
+        if (args[0] === 'add' && args[1]) {
+          whitelist.push(args[1]);
+          console.log(`${args[1]} added to whitelist.`);
+        } else if (args[0] === 'remove' && args[1]) {
+          whitelist = whitelist.filter(p => p !== args[1]);
+          console.log(`${args[1]} removed from whitelist.`);
+        } else if (args[0] === 'list') {
+          console.log(`Whitelist: ${whitelist.join(', ') || 'None'}`);
+        } else {
+          console.log('Usage: whitelist add/remove/list <name>');
+        }
+        break;
+      case 'setdeposit':
+        if (bot.entity && bot.entity.position) {
+          depositChest = bot.entity.position.floored();
+          console.log(`Deposit chest set to ${depositChest}`);
+        } else {
+          console.log('Cannot detect bot position.');
+        }
+        break;
+      case 'setrefill':
+        if (bot.entity && bot.entity.position) {
+          refillChest = bot.entity.position.floored();
+          console.log(`Refill chest set to ${refillChest}`);
+        } else {
+          console.log('Cannot detect bot position.');
+        }
+        break;
+      case 'setbound1':
+        if (bot.entity && bot.entity.position) {
+          bound1 = bot.entity.position.floored();
+          console.log(`Bound 1 set to ${bound1}`);
+        } else {
+          console.log('Cannot detect bot position.');
+        }
+        break;
+      case 'setbound2':
+        if (bot.entity && bot.entity.position) {
+          bound2 = bot.entity.position.floored();
+          console.log(`Bound 2 set to ${bound2}`);
+        } else {
+          console.log('Cannot detect bot position.');
+        }
+        break;
+      case 'eat':
+        await eatFood();
+        break;
+      case 'health':
+        if (bot.entity) {
+          console.log(`Health: ${bot.health}/20`);
+          console.log(`Food: ${bot.food}/20`);
+          console.log(`Saturation: ${bot.foodSaturation}/20`);
+        } else {
+          console.log('Bot not spawned.');
+        }
+        break;
+      case 'help':
+        console.log('Console Commands:');
+        console.log('  start/stop - Start or stop the trading bot');
+        console.log('  status - Show bot status and configuration');
+        console.log('  autoeat on/off - Enable or disable autoeat');
+        console.log('  whitelist add/remove/list <name> - Manage whitelist');
+        console.log('  setdeposit/setrefill/setbound1/setbound2 - Set positions');
+        console.log('  eat - Manually eat food');
+        console.log('  health - Show health and food levels');
+        console.log('  help - Show this help message');
+        console.log('  exit/quit - Exit the bot');
+        break;
+      case 'exit':
+      case 'quit':
+        console.log('Shutting down bot...');
+        running = false;
+        if (consoleInterface) consoleInterface.close();
+        process.exit(0);
+        break;
+      case '':
+        // Empty line, just show prompt again
+        break;
+      default:
+        console.log(`Unknown command: ${cmd}. Type 'help' for available commands.`);
+    }
+    consoleInterface.prompt();
+  });
+
+  consoleInterface.on('close', () => {
+    console.log('\nConsole interface closed.');
+    process.exit(0);
+  });
+
+  console.log('Console interface initialized. Type "help" for available commands.');
+  consoleInterface.prompt();
+}
+
+// -------------------- Autoeat System --------------------
+async function eatFood() {
+  if (!bot.entity || !bot.inventory) {
+    log('Cannot eat: bot not properly spawned');
+    return false;
+  }
+
+  const foodItems = bot.inventory.items().filter(item => {
+    const itemData = mcData.itemsByName[item.name];
+    return itemData && itemData.food && itemData.food > 0;
+  });
+
+  if (foodItems.length === 0) {
+    log('No food items found in inventory');
+    return false;
+  }
+
+  // Sort by food value (higher is better)
+  foodItems.sort((a, b) => {
+    const aData = mcData.itemsByName[a.name];
+    const bData = mcData.itemsByName[b.name];
+    return (bData.food || 0) - (aData.food || 0);
+  });
+
+  const bestFood = foodItems[0];
+  try {
+    await bot.consume();
+    log(`Ate ${bestFood.name} (${bestFood.count} remaining)`);
+    return true;
+  } catch (err) {
+    log(`Failed to eat food: ${err.message}`);
+    return false;
+  }
+}
 
 // -------------------- Main Loop --------------------
 async function mainLoop() {
@@ -152,6 +360,13 @@ async function mainLoop() {
         log('Bot not properly spawned, waiting...');
         await bot.waitForTicks(100);
         continue;
+      }
+
+      // Check autoeat
+      if (autoeat && bot.food < 18) {
+        log(`Food level low (${bot.food}/20), attempting to eat...`);
+        await eatFood();
+        await bot.waitForTicks(20); // Wait for eating animation
       }
 
       const villagers = getNearbyVillagers();

@@ -10,6 +10,7 @@
   },
   "antiAFKWaitTime": 600000,    
   "tradeItems": ["glass", "experience_bottle"],
+  "autoeat": true,
   "discord": {
     "webhookUrl": "",
     "enabled": false,
