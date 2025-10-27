@@ -1,5 +1,5 @@
 {
-  "host": "localhost",          
+  "host": "localhost",         
   "port": 25565,                 
   "username": "Synfulalt", 
   "version": "1.21.4",           
@@ -9,5 +9,13 @@
     "corner2": null             
   },
   "antiAFKWaitTime": 600000,    
-  "tradeItems": ["glass", "experience_bottle"] 
+  "tradeItems": ["glass", "experience_bottle"],
+  "discord": {
+    "webhookUrl": "",
+    "enabled": false,
+    "notifyTrades": true,
+    "notifyStatus": true,
+    "notifyErrors": true
+  }
+}bottle"] 
 }
