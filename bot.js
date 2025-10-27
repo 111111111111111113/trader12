@@ -4,9 +4,16 @@ const mineflayer = require('mineflayer');
 const { pathfinder, Movements, goals: { GoalNear } } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
 const mcDataLoader = require('minecraft-data');
+const DiscordWebhook = require('./discord-webhook');
 
 // -------------------- Load Config --------------------
 const config = JSON.parse(fs.readFileSync('./config.json', 'utf8'));
+
+// -------------------- Initialize Discord Webhook --------------------
+const discord = new DiscordWebhook(
+  config.discord?.webhookUrl || '',
+  config.discord?.enabled || false
+);
 
 // -------------------- Create Bot --------------------
 const bot = mineflayer.createBot({
@@ -81,11 +88,17 @@ bot.on('whisper', async (playerName, message) => {
     case 'start':
       running = true;
       reply(playerName, 'Trading bot started.');
+      if (config.discord?.notifyStatus) {
+        discord.sendStatusNotification('started', `Started by ${playerName}`);
+      }
       mainLoop();
       break;
     case 'stop':
       running = false;
       reply(playerName, 'Trading bot stopped.');
+      if (config.discord?.notifyStatus) {
+        discord.sendStatusNotification('stopped', `Stopped by ${playerName}`);
+      }
       break;
     case 'setdeposit':
       depositChest = player.position.floored();
@@ -123,6 +136,7 @@ bot.on('whisper', async (playerName, message) => {
       break;
     case 'help':
       reply(playerName, 'Commands: start, stop, setDeposit, setRefill, setBound1, setBound2, addWhitelist <name>, removeWhitelist <name>, whitelist, status');
+      reply(playerName, 'Discord webhooks: Configure webhook URL in config.json to receive notifications for trades, status, and errors');
       break;
     default:
       reply(playerName, 'Unknown command. Use /msg <botname> help');
@@ -148,6 +162,11 @@ async function mainLoop() {
       }
 
       log(`Found ${villagers.length} villagers nearby`);
+      
+      // Send Discord notification for villager detection
+      if (config.discord?.notifyTrades && villagers.length > 0) {
+        discord.sendVillagerFoundNotification(villagers.length, bound1 && bound2);
+      }
 
       for (const villager of villagers) {
         if (!running) break; // Check if bot should stop
@@ -179,6 +198,12 @@ async function mainLoop() {
 
     } catch (err) {
       log(`Error in main loop: ${err.message}`);
+      
+      // Send Discord notification for main loop errors
+      if (config.discord?.notifyErrors) {
+        discord.sendErrorNotification(err, 'Main trading loop');
+      }
+      
       // Wait before retrying to avoid rapid error loops
       await bot.waitForTicks(1000);
     }
@@ -276,6 +301,12 @@ async function tradeWithVillager(villager) {
         try {
           await bot.trade(villager, i);
           log(`Traded emeralds for ${sell}`);
+          
+          // Send Discord notification for successful trade
+          if (config.discord?.notifyTrades) {
+            discord.sendTradeNotification(sell, trade.outputItem?.count || 1, villager.position);
+          }
+          
           // Wait between trades
           await bot.waitForTicks(5);
         } catch (tradeErr) {
@@ -289,6 +320,11 @@ async function tradeWithVillager(villager) {
 
   } catch (err) {
     log(`Trade error: ${err.message}`);
+    
+    // Send Discord notification for trade errors
+    if (config.discord?.notifyErrors) {
+      discord.sendErrorNotification(err, 'Trading with villager');
+    }
   }
 }
 
@@ -313,6 +349,12 @@ async function depositItems() {
         try {
           await chest.deposit(item.type, null, item.count);
           log(`Deposited ${item.count}x ${item.name}`);
+          
+          // Send Discord notification for deposit
+          if (config.discord?.notifyTrades) {
+            discord.sendInventoryNotification('deposit', item.name, item.count);
+          }
+          
           deposited = true;
         } catch (depositErr) {
           log(`Failed to deposit ${item.name}: ${depositErr.message}`);
@@ -327,6 +369,11 @@ async function depositItems() {
     await chest.close();
   } catch (err) {
     log(`Deposit failed: ${err.message}`);
+    
+    // Send Discord notification for deposit errors
+    if (config.discord?.notifyErrors) {
+      discord.sendErrorNotification(err, 'Depositing items to chest');
+    }
   }
 }
 
@@ -356,6 +403,11 @@ async function refillEmeralds() {
         const withdrawAmount = Math.min(emeralds.count, 64 - emeraldCount);
         await chest.withdraw(emeralds.type, null, withdrawAmount);
         log(`Refilled ${withdrawAmount} emeralds`);
+        
+        // Send Discord notification for emerald refill
+        if (config.discord?.notifyTrades) {
+          discord.sendInventoryNotification('refill', 'emerald', withdrawAmount);
+        }
       } else {
         log('No emeralds found in refill chest');
       }
@@ -366,6 +418,11 @@ async function refillEmeralds() {
     await chest.close();
   } catch (err) {
     log(`Emerald refill failed: ${err.message}`);
+    
+    // Send Discord notification for refill errors
+    if (config.discord?.notifyErrors) {
+      discord.sendErrorNotification(err, 'Refilling emeralds from chest');
+    }
   }
 }
 
@@ -383,6 +440,23 @@ bot.placeBlock = () => { log('SAFETY: Block placing attempt blocked!'); return P
 bot.activateBlock = () => { log('SAFETY: Block activation attempt blocked!'); return Promise.resolve(); };
 
 // -------------------- Logging --------------------
-bot.on('spawn', () => log('Bot spawned successfully.'));
-bot.on('kicked', (reason) => log(`Kicked: ${reason}`));
-bot.on('error', (err) => log(`Error: ${err.message}`));
+bot.on('spawn', () => {
+  log('Bot spawned successfully.');
+  if (config.discord?.notifyStatus) {
+    discord.sendStatusNotification('connected', 'Bot connected to server');
+  }
+});
+
+bot.on('kicked', (reason) => {
+  log(`Kicked: ${reason}`);
+  if (config.discord?.notifyErrors) {
+    discord.sendErrorNotification(new Error(`Kicked: ${reason}`), 'Server connection');
+  }
+});
+
+bot.on('error', (err) => {
+  log(`Error: ${err.message}`);
+  if (config.discord?.notifyErrors) {
+    discord.sendErrorNotification(err, 'Bot general error');
+  }
+});
