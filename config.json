@@ -1,5 +1,5 @@
 {
-  "host": "localhost",         
+  "host": "2b2t.org",         
   "port": 25565,                 
   "username": "Synfulalt", 
   "version": "1.21.4",           
@@ -10,6 +10,12 @@
   },
   "antiAFKWaitTime": 600000,    
   "tradeItems": ["glass", "experience_bottle"],
+  "grimV3Evasion": {
+    "enabled": true,
+    "randomMovement": true,
+    "humanLikeTiming": true,
+    "antiPatternDetection": true
+  },
   "discord": {
     "webhookUrl": "",
     "enabled": false,
@@ -17,5 +23,4 @@
     "notifyStatus": true,
     "notifyErrors": true
   }
-}bottle"] 
 }
